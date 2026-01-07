@@ -22,6 +22,43 @@ static const uint32_t evdi_formats[] = {
 	DRM_FORMAT_ARGB8888,
 };
 
+// [FIX START] Software VBlank Timer
+static enum hrtimer_restart evdi_vblank_timer_fn(struct hrtimer *t)
+{
+	struct evdi_vblank *v = container_of(t, struct evdi_vblank, timer);
+
+	if (!atomic_read(&v->enabled))
+		return HRTIMER_NORESTART;
+
+	if (v->crtc)
+		drm_crtc_handle_vblank(v->crtc);
+
+	hrtimer_forward_now(&v->timer, v->period);
+	return HRTIMER_RESTART;
+}
+
+static int evdi_pipe_enable_vblank(struct drm_simple_display_pipe *pipe)
+{
+	struct evdi_device *evdi = pipe->crtc.dev->dev_private;
+	// Assuming simple pipe 0 maps to vblank 0.
+	// If you have multiple pipes, you might need pipe->plane.index
+	struct evdi_vblank *v = &evdi->vblank[0];
+
+	atomic_set(&v->enabled, 1);
+	hrtimer_start(&v->timer, v->period, HRTIMER_MODE_REL);
+	return 0;
+}
+
+static void evdi_pipe_disable_vblank(struct drm_simple_display_pipe *pipe)
+{
+	struct evdi_device *evdi = pipe->crtc.dev->dev_private;
+	struct evdi_vblank *v = &evdi->vblank[0];
+
+	atomic_set(&v->enabled, 0);
+	hrtimer_cancel(&v->timer);
+}
+// [FIX END]
+
 static void evdi_pipe_enable(struct drm_simple_display_pipe *pipe,
 			     struct drm_crtc_state *crtc_state,
 			     struct drm_plane_state *plane_state)
@@ -97,6 +134,11 @@ static const struct drm_simple_display_pipe_funcs evdi_pipe_funcs = {
 	.enable		= evdi_pipe_enable,
 	.disable	= evdi_pipe_disable,
 	.update		= evdi_pipe_update,
+	.prepare_fb = drm_gem_fb_simple_display_pipe_prepare_fb,
+	// [FIX START]
+	.enable_vblank = evdi_pipe_enable_vblank,
+	.disable_vblank = evdi_pipe_disable_vblank,
+	// [FIX END]
 };
 
 int evdi_modeset_init(struct drm_device *dev)
