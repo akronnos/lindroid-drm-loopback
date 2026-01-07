@@ -10,6 +10,7 @@ config DRM_LINDROID_EVDI
 	tristate "Extensible Virtual Display Interface"
 	depends on DRM
 	select DRM_KMS_HELPER
+	select DRM_GEM_CMA_HELPER
 	help
 		This is a KMS interface driver allowing user-space programs to
 		register a virtual display (that imitates physical monitor) and
