@@ -88,7 +88,7 @@ int evdi_modeset_init(struct drm_device *dev)
 	struct evdi_device *evdi = dev->dev_private;
 	int ret, i;
 
-	ret = drm_mode_config_init(dev);
+	drm_mode_config_init(dev);
 	if (ret) {
 		evdi_err("Failed to initialize mode config: %d", ret);
 		return ret;

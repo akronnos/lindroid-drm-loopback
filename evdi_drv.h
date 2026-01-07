@@ -54,7 +54,7 @@
 #if KERNEL_VERSION(4, 19, 0) <= LINUX_VERSION_CODE
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_probe_helper.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_fourcc.h>
@@ -299,6 +299,7 @@ void evdi_modeset_cleanup(struct drm_device *dev);
 /* evdi_connector.c */
 int evdi_connector_init(struct drm_device *dev, struct evdi_device *evdi);
 void evdi_connector_cleanup(struct evdi_device *evdi);
+int evdi_connector_slot(const struct evdi_device *evdi, const struct drm_connector *conn);
 
 /* evdi_ioctl.c */
 int evdi_ioctl_connect(struct drm_device *dev, void *data, struct drm_file *file);
