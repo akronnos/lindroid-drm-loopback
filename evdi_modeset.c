@@ -22,40 +22,41 @@ static const uint32_t evdi_formats[] = {
 	DRM_FORMAT_ARGB8888,
 };
 
-// [FIX START] Software VBlank Timer
-static enum hrtimer_restart evdi_vblank_timer_fn(struct hrtimer *t)
+// [FIX START] Safe VBlank using Workqueue
+static void evdi_vblank_work_fn(struct work_struct *work)
 {
-	struct evdi_vblank *v = container_of(t, struct evdi_vblank, timer);
+    struct evdi_vblank *v = container_of(work, struct evdi_vblank, vblank_work.work);
 
-	if (!atomic_read(&v->enabled))
-		return HRTIMER_NORESTART;
+    if (!atomic_read(&v->enabled))
+        return;
 
-	if (v->crtc)
-		drm_crtc_handle_vblank(v->crtc);
+    if (v->crtc)
+        drm_crtc_handle_vblank(v->crtc);
 
-	hrtimer_forward_now(&v->timer, v->period);
-	return HRTIMER_RESTART;
+    // Reschedule for ~60Hz (16ms)
+    schedule_delayed_work(&v->vblank_work, msecs_to_jiffies(16));
 }
 
 static int evdi_pipe_enable_vblank(struct drm_simple_display_pipe *pipe)
 {
-	struct evdi_device *evdi = pipe->crtc.dev->dev_private;
-	// Assuming simple pipe 0 maps to vblank 0.
-	// If you have multiple pipes, you might need pipe->plane.index
-	struct evdi_vblank *v = &evdi->vblank[0];
+    struct evdi_device *evdi = pipe->crtc.dev->dev_private;
+    struct evdi_vblank *v = &evdi->vblank[0];
 
-	atomic_set(&v->enabled, 1);
-	hrtimer_start(&v->timer, v->period, HRTIMER_MODE_REL);
-	return 0;
+    if (atomic_read(&v->enabled))
+        return 0;
+
+    atomic_set(&v->enabled, 1);
+    schedule_delayed_work(&v->vblank_work, msecs_to_jiffies(16));
+    return 0;
 }
 
 static void evdi_pipe_disable_vblank(struct drm_simple_display_pipe *pipe)
 {
-	struct evdi_device *evdi = pipe->crtc.dev->dev_private;
-	struct evdi_vblank *v = &evdi->vblank[0];
+    struct evdi_device *evdi = pipe->crtc.dev->dev_private;
+    struct evdi_vblank *v = &evdi->vblank[0];
 
-	atomic_set(&v->enabled, 0);
-	hrtimer_cancel(&v->timer);
+    atomic_set(&v->enabled, 0);
+    cancel_delayed_work_sync(&v->vblank_work);
 }
 // [FIX END]
 
@@ -63,26 +64,9 @@ static void evdi_pipe_enable(struct drm_simple_display_pipe *pipe,
 			     struct drm_crtc_state *crtc_state,
 			     struct drm_plane_state *plane_state)
 {
-	struct evdi_device *evdi = pipe->plane.dev->dev_private;
-	int idx = 0;
-	const struct drm_display_mode *m = &crtc_state->mode;
-	unsigned int vrefresh = drm_mode_vrefresh(m);
-	u64 ns;
-
-	if (!vrefresh)
-		vrefresh = 60;
-
-	ns = DIV_ROUND_CLOSEST_ULL(1000000000ULL, vrefresh);
-
-	evdi->vblank[idx].crtc = &pipe->crtc;
-	evdi->vblank[idx].period = ktime_set(0, ns);
-	atomic_set(&evdi->vblank[idx].enabled, 1);
-
+	// Just enable vblank. The helper we added (evdi_pipe_enable_vblank)
+	// will handle scheduling the workqueue.
 	drm_crtc_vblank_on(&pipe->crtc);
-
-	/* kick timer */
-	hrtimer_start(&evdi->vblank[idx].timer, evdi->vblank[idx].period,
-		      HRTIMER_MODE_REL);
 }
 
 static void evdi_pipe_disable(struct drm_simple_display_pipe *pipe)
@@ -91,8 +75,7 @@ static void evdi_pipe_disable(struct drm_simple_display_pipe *pipe)
 	int idx = 0;
 
 	atomic_set(&evdi->vblank[idx].enabled, 0);
-	hrtimer_cancel(&evdi->vblank[idx].timer);
-
+	cancel_delayed_work_sync(&evdi->vblank[idx].vblank_work);
 	drm_crtc_vblank_off(&pipe->crtc);
 }
 
@@ -168,6 +151,11 @@ int evdi_modeset_init(struct drm_device *dev)
 		goto err_connector;
 	}
 	for(i = 0; i < LINDROID_MAX_CONNECTORS; i++) {
+		// [FIX START] Init Workqueue instead of Timer
+    		INIT_DELAYED_WORK(&evdi->vblank[i].vblank_work, evdi_vblank_work_fn);
+		evdi->vblank[i].crtc = &evdi->pipe[i].crtc;
+		atomic_set(&evdi->vblank[i].enabled, 0);
+    		// [FIX END]
 		ret = drm_simple_display_pipe_init(dev, &evdi->pipe[i], &evdi_pipe_funcs,
 						evdi_formats, ARRAY_SIZE(evdi_formats),
 						NULL, evdi->connector[i]);

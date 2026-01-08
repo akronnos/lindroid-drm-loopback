@@ -200,8 +200,7 @@ struct evdi_display {
 };
 
 struct evdi_vblank {
-	struct hrtimer timer;
-	ktime_t period;
+	struct delayed_work vblank_work;
 	atomic_t enabled;
 	struct drm_crtc *crtc;
 };
